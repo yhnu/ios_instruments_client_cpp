@@ -1,11 +1,10 @@
-
 #include <assert.h>
 #include <memory.h>
 #include <cstdio>
 #include <cstdlib>
+#include <iomanip>  // std::setw
 #include <iostream>
 #include <vector>
-
 class InBuffer
 {
     uint8_t* _buf;
@@ -147,16 +146,16 @@ class DTXMessageHeader
     }
     friend std::ostream& operator<<(std::ostream& os, const DTXMessageHeader& dtx_meesage_header)
     {
-        os << "DTXMessageHeader->";
-        os << "magic: 0x" << std::hex << dtx_meesage_header.magic << "|";
-        os << "cb: 0x" << std::hex << dtx_meesage_header.cb << "|";
-        os << "fragmentId: 0x" << dtx_meesage_header.fragmentId << "|";
-        os << "fragmentCount: 0x" << dtx_meesage_header.fragmentCount << "|";
-        os << "length: 0x" << dtx_meesage_header.length << "|";
-        os << "identifier: 0x" << dtx_meesage_header.identifier << "|";
-        os << "conversationIndex: 0x" << dtx_meesage_header.conversationIndex << "|";
-        os << "channelCode: 0x" << dtx_meesage_header.channelCode << "|";
-        os << "expectsReply: 0x" << dtx_meesage_header.expectsReply << "|";
+        os << "DTXMessageHeader(";
+        os << "magic:0x" << std::hex << dtx_meesage_header.magic << "|";
+        os << "cb:0x" << std::hex << dtx_meesage_header.cb << "|";
+        os << "fragmentId:0x" << dtx_meesage_header.fragmentId << "|";
+        os << "fragmentCount:0x" << dtx_meesage_header.fragmentCount << "|";
+        os << "length:0x" << dtx_meesage_header.length << "|";
+        os << "identifier:0x" << dtx_meesage_header.identifier << "|";
+        os << "conversationIndex:0x" << dtx_meesage_header.conversationIndex << "|";
+        os << "channelCode:0x" << dtx_meesage_header.channelCode << "|";
+        os << "expectsReply:0x" << dtx_meesage_header.expectsReply << ")";
         return os;
     }
 };
@@ -172,10 +171,10 @@ class DTXPayloadHeader
 
     friend std::ostream& operator<<(std::ostream& os, const DTXPayloadHeader& rhs)
     {
-        os << "DTXPayloadHeader->";
+        os << "DTXPayloadHeader(";
         os << "flags: 0x" << std::hex << rhs.flags << "|";
         os << "auxiliaryLength: 0x" << std::hex << rhs.auxiliaryLength << "|";
-        os << "totalLength: 0x" << rhs.totalLength << "|";
+        os << "totalLength: 0x" << rhs.totalLength << ")";
         return os;
     }
 };
@@ -194,9 +193,9 @@ class DTXAuxiliariesHeader
 
     friend std::ostream& operator<<(std::ostream& os, const DTXAuxiliariesHeader& rhs)
     {
-        os << "DTXAuxiliariesHeader->";
+        os << "DTXAuxiliariesHeader(";
         os << "magic: 0x" << std::hex << rhs.magic << "|";
-        os << "length: 0x" << std::hex << rhs.length << "|";
+        os << "length: 0x" << std::hex << rhs.length << ")";
         return os;
     }
 };
@@ -204,40 +203,40 @@ class DTXAuxiliariesHeader
 class DTXAuxiliary
 {
    public:
-    int magic;
-    int type;
+    int32_t magic;
+    int32_t type;
     int obj_len;
-    union
-    {
-        int8_t* obj;
-        int64_t val_64;
-        int8_t val_12;
-    } dat;
+    const void* obj;
 
    public:
     DTXAuxiliary()
     {
-        dat.obj = nullptr;
-        magic   = 0xa;
-        type    = -1;
+        obj   = nullptr;
+        magic = 0xa;
+        type  = -1;
     }
 
     friend std::ostream& operator<<(std::ostream& os, const DTXAuxiliary& rhs)
     {
-        os << "(DTXAuxiliary)|";
+        os << "DTXAuxiliary(";
         os << "magic: 0x" << std::hex << rhs.magic << "|";
         os << "type: 0x" << std::hex << rhs.type << "|";
-        if (rhs.type == 2)
+        if (rhs.obj != nullptr)
         {
-            os << "obj: 0x" << std::hex << rhs.dat.obj << "|";
+            std::shared_ptr<char> buf(new char[1024]);
+            unsigned char* chunk = (unsigned char*)rhs.obj;
+            int len              = rhs.obj_len > 5 ? 5 : rhs.obj_len;
+            for (int i = 0; i < len; i++)
+            {
+                char b[10];
+                sprintf(b, " %02x", chunk[i]);
+                strcat(buf.get(), b);
+            }
+            os << "obj: " << buf << "|";
         }
-        else if (rhs.type == 4)
+        else
         {
-            os << "int64 : 0x" << std::hex << rhs.dat.val_64 << "|";
-        }
-        else if (rhs.type == 3)
-        {
-            os << "int12 : 0x" << std::hex << rhs.dat.val_12 << "|";
+            os << "obj: null|";
         }
         return os;
     }
@@ -251,33 +250,49 @@ class DTXMessage
     DTXPayloadHeader _payload_header;
     DTXAuxiliariesHeader _auxiliaries_header;
     std::vector<DTXAuxiliary> _auxiliaries;
-    const void* _selector;
+    const char* _selector;
 
    public:
-    static DTXMessage* from_bytes(uint8_t* buf, int len)
+    friend std::ostream& operator<<(std::ostream& os, const DTXMessage& rhs)
+    {
+        os << "DTXMessage(\n";
+        os << "\t" << rhs._message_header << std::endl;
+        os << "\t" << rhs._payload_header << std::endl;
+        os << "\t" << rhs._auxiliaries_header << std::endl;
+        for (auto& e : rhs._auxiliaries)
+        {
+            os << "\t" << e << std::endl;
+        }
+        os << "\t_selector(" << rhs._selector << ")" << std::endl;
+        os << ")";
+        return os;
+    }
+
+   public:
+    static DTXMessage from_bytes(uint8_t* buf, int len)
     {
         InBuffer in(buf, len);
 
-        DTXMessage* ret = new DTXMessage();
-        ret->_buf       = buf;
-        in.read<DTXMessageHeader>(ret->_message_header);
-        std::cout << ret->_message_header << std::endl;
+        DTXMessage dtx;
+        dtx._buf = buf;
+        in.read<DTXMessageHeader>(dtx._message_header);
+        std::cout << dtx._message_header << std::endl;
 
-        bool has_payload = ret->_message_header.length > 0;
+        bool has_payload = dtx._message_header.length > 0;
 
         if (!has_payload)
         {
-            return ret;
+            return dtx;
         }
 
-        if (ret->_message_header.length != len - ret->_message_header.fragmentCount * sizeof(DTXMessageHeader))
+        if (dtx._message_header.length != len - dtx._message_header.fragmentCount * sizeof(DTXMessageHeader))
         {
             fprintf(stderr, "[CRASH]incorrect DTXMessageHeader->length");
             exit(1);
         }
         else
         {
-            if (ret->_message_header.fragmentCount == 1)
+            if (dtx._message_header.fragmentCount == 1)
             {
             }
             else
@@ -286,33 +301,30 @@ class DTXMessage
                 exit(1);
             }
 
-            in.read<DTXPayloadHeader>(ret->_payload_header);
-            std::cout << ret->_payload_header << std::endl;
+            in.read<DTXPayloadHeader>(dtx._payload_header);
+            std::cout << dtx._payload_header << std::endl;
 
-            if (ret->_payload_header.totalLength == 0)
+            if (dtx._payload_header.totalLength == 0)
             {
-                return ret;
+                return dtx;
             }
-            else if (ret->_payload_header.totalLength != in.last_len())
+            else if (dtx._payload_header.totalLength != in.last_len())
             {
                 fprintf(stderr, "incorrect DTXPayloadHeader->totalLength");
                 exit(1);
             }
 
-            if (ret->_payload_header.auxiliaryLength > 0)
+            if (dtx._payload_header.auxiliaryLength > 0)
             {
-                in.read<DTXAuxiliariesHeader>(ret->_auxiliaries_header);
-                std::cout << ret->_auxiliaries_header << std::endl;
-                std::cout << "xxxx";
+                in.read<DTXAuxiliariesHeader>(dtx._auxiliaries_header);
+                std::cout << dtx._auxiliaries_header << std::endl;
                 int aux_length = 0;
-                while (aux_length < ret->_auxiliaries_header.length)
+                while (aux_length < dtx._auxiliaries_header.length)
                 {
-                    int i = 0;
+                    int len = 0;
                     DTXAuxiliary aux;
-                    i += in.read<int>(aux.magic);
-                    std::cout << aux.magic << aux.type;
-
-                    i += in.read<int>(aux.type);
+                    len += in.read(aux.magic);
+                    len += in.read(aux.type);
 
                     if (aux.magic != 0xa)
                     {
@@ -321,44 +333,40 @@ class DTXMessage
                     }
                     if (aux.type == 2)
                     {
-                        i += in.read<int>(aux.obj_len);
-                        i += aux.obj_len;
-                        const void* obj = in.read_buf(aux.obj_len);
+                        // 4byte
+                        len += in.read<int>(aux.obj_len);
+                        len += aux.obj_len;
 
-                        aux_length += i;
-                        ret->_auxiliaries.push_back(aux);
+                        aux.obj = in.read_buf(aux.obj_len);
                     }
-                    else if (aux.type == 4)
+                    else if (aux.type == 4 || aux.type == 3)
                     {
-                        i += in.read(aux.dat.val_64);
-
-                        aux_length += i;
-                        ret->_auxiliaries.push_back(aux);
-                    }
-                    else if (aux.type == 3)
-                    {
-                        int32_t obj;
-                        i += in.read(obj);
-
-                        aux_length += i;
-                        ret->_auxiliaries.push_back(aux);
+                        // 4byte * aux.type
+                        aux.obj_len = 4 * aux.type;
+                        aux.obj     = in.read_buf(aux.obj_len);
                     }
                     else
                     {
                         fprintf(stderr, "unknown auxiliary type");
                         exit(1);
                     }
-                    std::cout << aux << std::endl;
+                    aux_length += len;
+                    dtx._auxiliaries.push_back(aux);
                 }
-                if (aux_length != ret->_auxiliaries_header.length)
+                if (aux_length != dtx._auxiliaries_header.length)
                 {
                     fprintf(stderr, "incorrect DTXAuxiliariesHeader.length");
                     exit(1);
                 }
+                else
+                {
+                    std::cout << "aux_length=" << aux_length << "_auxiliaries_header.length" << dtx._auxiliaries_header.length << std::endl;
+                }
             }
-            ret->_selector = in.read_buf(in.last_len());
+            dtx._selector = (char*)in.read_buf(in.last_len());
         }
-        return ret;
+        std::cout << dtx << std::endl;
+        return dtx;
     }
 };
 
