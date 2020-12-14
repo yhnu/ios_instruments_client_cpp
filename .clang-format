@@ -4,6 +4,7 @@ BasedOnStyle: Chromium
 IndentWidth: 4
 ColumnLimit: 800
 AlignConsecutiveAssignments: true
+AccessModifierOffset: -4
 BraceWrapping: 
  AfterClass:      true
  AfterControlStatement: true

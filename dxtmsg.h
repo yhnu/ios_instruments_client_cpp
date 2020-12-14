@@ -5,13 +5,16 @@
 #include <iomanip>  // std::setw
 #include <iostream>
 #include <vector>
+#include "spdlog/spdlog.h"
+#pragma once
+
 class InBuffer
 {
     uint8_t* _buf;
     uint32_t _limit;
     uint32_t _cur;
 
-   public:
+public:
     InBuffer(uint8_t* buf, uint32_t len) : _cur(0), _buf(buf), _limit(len) {}
 
     template <typename T>
@@ -42,7 +45,7 @@ class InBuffer
 
 class OutBuffer
 {
-   public:
+public:
     OutBuffer(int cap = 0) : capacity(cap), buf(nullptr), len(0)
     {
         if (cap != 0)
@@ -117,15 +120,17 @@ class OutBuffer
         capacity = new_cap;
     }
 
-   private:
+private:
     void* buf;
     size_t capacity;
     size_t len;
 };
 
+#define DTXMessageHeader_t std::shared_ptr<DTXMessageHeader>
+
 class DTXMessageHeader
 {
-   public:
+public:
     uint32_t magic;
     uint32_t cb;
     uint16_t fragmentId;
@@ -136,7 +141,7 @@ class DTXMessageHeader
     uint32_t channelCode;
     uint32_t expectsReply;
 
-   public:
+public:
     DTXMessageHeader()
     {
         this->magic         = 0x1f3d5b79;
@@ -144,6 +149,13 @@ class DTXMessageHeader
         this->fragmentId    = 0;
         this->fragmentCount = 1;
     }
+    static DTXMessageHeader_t from_buffer_copy(uint8_t* buf, int offset, int size)
+    {
+        DTXMessageHeader_t p = std::make_shared<DTXMessageHeader>();
+        memcpy(p.get(), buf + offset, size);
+        return p;
+    }
+
     friend std::ostream& operator<<(std::ostream& os, const DTXMessageHeader& dtx_meesage_header)
     {
         os << "DTXMessageHeader(";
@@ -162,12 +174,17 @@ class DTXMessageHeader
 
 class DTXPayloadHeader
 {
-   public:
+public:
     uint32_t flags;
     uint32_t auxiliaryLength;
     uint64_t totalLength;
 
-    DTXPayloadHeader() { flags = 0x2; }
+    DTXPayloadHeader()
+    {
+        flags           = 0x2;
+        auxiliaryLength = 0x0;
+        totalLength     = 0x0;
+    }
 
     friend std::ostream& operator<<(std::ostream& os, const DTXPayloadHeader& rhs)
     {
@@ -185,11 +202,15 @@ class DTXPayloadHeader
 // followed by the array data itself.
 class DTXAuxiliariesHeader
 {
-   public:
+public:
     u_int64_t magic;
     int64_t length;
 
-    DTXAuxiliariesHeader() { magic = 0x1f0; }
+    DTXAuxiliariesHeader()
+    {
+        magic  = 0x1f0;
+        length = 0;
+    }
 
     friend std::ostream& operator<<(std::ostream& os, const DTXAuxiliariesHeader& rhs)
     {
@@ -202,18 +223,32 @@ class DTXAuxiliariesHeader
 
 class DTXAuxiliary
 {
-   public:
+public:
     int32_t magic;
     int32_t type;
-    int obj_len;
+    int32_t obj_len;
     const void* obj;
 
-   public:
+public:
     DTXAuxiliary()
     {
         obj   = nullptr;
         magic = 0xa;
         type  = -1;
+    }
+
+    void serial(OutBuffer& out)
+    {
+        if (obj == nullptr)
+        {
+            SPDLOG_ERROR("obj == nullptr");
+            exit(1);
+        }
+        out.write(magic);
+        out.write(type);
+        if (type == 2)
+            out.write(obj_len);
+        out.write(obj, obj_len);
     }
 
     friend std::ostream& operator<<(std::ostream& os, const DTXAuxiliary& rhs)
@@ -242,17 +277,88 @@ class DTXAuxiliary
     }
 };
 
+class DTXSelector
+{
+public:
+    void* buf;
+    int len;
+    DTXSelector() : buf(nullptr), len(0) {}
+    void serial(OutBuffer& out) { out.write(buf, len); }
+    friend std::ostream& operator<<(std::ostream& os, const DTXSelector& rhs)
+    {
+        os << "DTXSelector(";
+        if (rhs.buf != nullptr)
+        {
+            char* p = (char*)rhs.buf;
+            for (int i = 0; i < rhs.len; i++)
+            {
+                if (!(p[i] == '\0' || p[i] == '\n' || p[i] == ' '))
+                {
+                    os << p[i];
+                }
+            }
+        }
+        else
+        {
+            os << "obj: null|";
+        }
+        return os;
+    }
+};
+
+#define DTXMessage_t std::shared_ptr<DTXMessage>
+
 class DTXMessage
 {
-   public:
+public:
     uint8_t* _buf;
+    int _buf_size;
+
     DTXMessageHeader _message_header;
     DTXPayloadHeader _payload_header;
     DTXAuxiliariesHeader _auxiliaries_header;
     std::vector<DTXAuxiliary> _auxiliaries;
-    const char* _selector;
+    DTXSelector _selector;
 
-   public:
+public:
+    DTXMessage() : _buf(nullptr), _buf_size(0) {}
+    ~DTXMessage()
+    {
+        if (_buf)
+        {
+            free(_buf);
+            _buf_size = 0;
+        }
+    }
+
+    void Init(uint8_t* buf, int len)
+    {
+        if (buf != nullptr && len > 0)
+        {
+            resize_buf(len);
+            memcpy(this->_buf, buf, len);
+        }
+    }
+
+protected:
+    void resize_buf(int new_size)
+    {
+        if (_buf && new_size > _buf_size)
+        {
+            _buf      = (uint8_t*)realloc(_buf, new_size);
+            _buf_size = new_size;
+        }
+        else if (_buf == nullptr)
+        {
+            _buf      = (uint8_t*)malloc(new_size);
+            _buf_size = new_size;
+        }
+        else
+        {
+        }
+    }
+
+public:
     friend std::ostream& operator<<(std::ostream& os, const DTXMessage& rhs)
     {
         os << "DTXMessage(\n";
@@ -263,110 +369,146 @@ class DTXMessage
         {
             os << "\t" << e << std::endl;
         }
-        os << "\t_selector(" << rhs._selector << ")" << std::endl;
-        os << ")";
+        os << "\t" << rhs._selector << std::endl;
+
         return os;
     }
 
-   public:
-    static DTXMessage from_bytes(uint8_t* buf, int len)
+public:
+    static DTXMessage_t from_bytes(uint8_t* buf, const int len)
     {
-        InBuffer in(buf, len);
+        DTXMessage_t dtx = std::make_shared<DTXMessage>();
+        dtx->Init(buf, len);
 
-        DTXMessage dtx;
-        dtx._buf = buf;
-        in.read<DTXMessageHeader>(dtx._message_header);
-        std::cout << dtx._message_header << std::endl;
+        InBuffer in(dtx->_buf, dtx->_buf_size);
+        spdlog::info("{} {}", dtx->_buf, dtx->_buf_size);
 
-        bool has_payload = dtx._message_header.length > 0;
+        in.read<DTXMessageHeader>(dtx->_message_header);
+        std::cout << dtx->_message_header << std::endl;
+
+        bool has_payload = dtx->_message_header.length > 0;
 
         if (!has_payload)
         {
+            SPDLOG_WARN("has no payload");
             return dtx;
         }
 
-        if (dtx._message_header.length != len - dtx._message_header.fragmentCount * sizeof(DTXMessageHeader))
+        if (dtx->_message_header.length != dtx->_buf_size - dtx->_message_header.fragmentCount * sizeof(DTXMessageHeader))
         {
-            fprintf(stderr, "[CRASH]incorrect DTXMessageHeader->length");
+            SPDLOG_ERROR("[CRASH]incorrect DTXMessageHeader->length");
             exit(1);
         }
         else
         {
-            if (dtx._message_header.fragmentCount == 1)
+            if (dtx->_message_header.fragmentCount != 1)
             {
-            }
-            else
-            {
-                fprintf(stderr, "[CRASH]not impl");
+                SPDLOG_ERROR("[CRASH]not impl");
                 exit(1);
             }
 
-            in.read<DTXPayloadHeader>(dtx._payload_header);
-            std::cout << dtx._payload_header << std::endl;
+            in.read<DTXPayloadHeader>(dtx->_payload_header);
+            std::cout << dtx->_payload_header << std::endl;
 
-            if (dtx._payload_header.totalLength == 0)
+            if (dtx->_payload_header.totalLength == 0)
             {
+                SPDLOG_INFO("_payload_header.totalLength == 0");
                 return dtx;
             }
-            else if (dtx._payload_header.totalLength != in.last_len())
+            else if (dtx->_payload_header.totalLength != in.last_len())
             {
-                fprintf(stderr, "incorrect DTXPayloadHeader->totalLength");
+                SPDLOG_ERROR("incorrect DTXPayloadHeader->totalLength");
                 exit(1);
             }
 
-            if (dtx._payload_header.auxiliaryLength > 0)
+            if (dtx->_payload_header.auxiliaryLength > 0)
             {
-                in.read<DTXAuxiliariesHeader>(dtx._auxiliaries_header);
-                std::cout << dtx._auxiliaries_header << std::endl;
+                in.read<DTXAuxiliariesHeader>(dtx->_auxiliaries_header);
+                std::cout << dtx->_auxiliaries_header << std::endl;
                 int aux_length = 0;
-                while (aux_length < dtx._auxiliaries_header.length)
+                while (aux_length < dtx->_auxiliaries_header.length)
                 {
                     int len = 0;
                     DTXAuxiliary aux;
                     len += in.read(aux.magic);
                     len += in.read(aux.type);
+                    SPDLOG_INFO("{:x} {:x} {:x}", in.get_cursor(), aux.magic, aux.type);
 
                     if (aux.magic != 0xa)
                     {
-                        fprintf(stderr, "incorrect auxiliary magic");
+                        SPDLOG_ERROR("incorrect auxiliary magic");
                         exit(1);
                     }
                     if (aux.type == 2)
                     {
                         // 4byte
-                        len += in.read<int>(aux.obj_len);
-                        len += aux.obj_len;
-
+                        len += in.read<int32_t>(aux.obj_len);
                         aux.obj = in.read_buf(aux.obj_len);
+                        SPDLOG_INFO("l =  {:x}, cur={:x}", aux.obj_len, in.get_cursor());
+
+                        len += aux.obj_len;
                     }
-                    else if (aux.type == 4 || aux.type == 3)
+                    else if (aux.type == 4)  // || aux.type == 3)
                     {
                         // 4byte * aux.type
-                        aux.obj_len = 4 * aux.type;
+                        aux.obj_len = 16 - 8;
                         aux.obj     = in.read_buf(aux.obj_len);
+                        len += aux.obj_len;
+                    }
+                    else if (aux.type == 3)
+                    {
+                        aux.obj_len = 12 - 8;
+                        aux.obj     = in.read_buf(aux.obj_len);
+                        len += aux.obj_len;
                     }
                     else
                     {
-                        fprintf(stderr, "unknown auxiliary type");
+                        SPDLOG_ERROR("unknown auxiliary type");
                         exit(1);
                     }
                     aux_length += len;
-                    dtx._auxiliaries.push_back(aux);
+                    dtx->_auxiliaries.push_back(aux);
                 }
-                if (aux_length != dtx._auxiliaries_header.length)
+                if (aux_length != dtx->_auxiliaries_header.length)
                 {
-                    fprintf(stderr, "incorrect DTXAuxiliariesHeader.length");
+                    SPDLOG_ERROR("incorrect DTXAuxiliariesHeader.length");
                     exit(1);
                 }
                 else
                 {
-                    std::cout << "aux_length=" << aux_length << "_auxiliaries_header.length" << dtx._auxiliaries_header.length << std::endl;
+                    SPDLOG_INFO("aux_length={}, _auxiliaries_header.length={}", aux_length, dtx->_auxiliaries_header.length);
                 }
             }
-            dtx._selector = (char*)in.read_buf(in.last_len());
+            dtx->_selector.len = in.last_len();
+            dtx->_selector.buf = (char*)in.read_buf(dtx->_selector.len);
         }
-        std::cout << dtx << std::endl;
         return dtx;
+    }
+
+    bool to_bytes(OutBuffer& out)
+    {
+        OutBuffer payload_buf;
+        payload_buf.write(this->_payload_header);
+        payload_buf.write(this->_auxiliaries_header);
+
+        SPDLOG_INFO("size={}", this->_auxiliaries.size());
+        for (int i = 0; i < this->_auxiliaries.size(); i++)
+        {
+            this->_auxiliaries[i].serial(payload_buf);
+        }
+        this->_selector.serial(payload_buf);
+
+        if (payload_buf.length() > 65504)
+        {
+            SPDLOG_ERROR("payload_buf.length() > 65504");
+            exit(1);
+        }
+        else
+        {
+            out.write(this->_message_header);
+            out.write(payload_buf.buffer(), payload_buf.length());
+        }
+        return true;
     }
 };
 

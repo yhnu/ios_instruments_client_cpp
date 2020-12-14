@@ -6,7 +6,7 @@
 
 int main(int argc, char** argv)
 {
-    FILE* f = fopen("../dtxmsg_1_0.bin", "r");
+    FILE* f = fopen("../0.bin", "r");
     if (f)
     {
         fseek(f, 0, SEEK_END);
@@ -17,8 +17,19 @@ int main(int argc, char** argv)
         fread(bin, sizeof(uint8_t), size, f);
         fclose(f);
 
-        DTXMessage::from_bytes(bin, size);
+        DTXMessage_t dtx = DTXMessage::from_bytes(bin, size);
 
+        OutBuffer out;
+        dtx->to_bytes(out);
+
+        SPDLOG_INFO("{} {}", out.buffer(), out.length());
+
+        FILE* f2 = fopen("../0_out.bin", "wb");
+        if (f2)
+        {
+            fwrite(out.buffer(), out.length(), sizeof(char), f2);
+            fclose(f2);
+        }
         delete[] bin;
     }
     else
