@@ -44,6 +44,7 @@
 #include <libimobiledevice/ext.h>
 #include <libimobiledevice/libimobiledevice.h>
 #include "DTXClientMixin.h"
+#include "instrument_rpc.h"
 #include "spdlog/spdlog.h"
 
 static int quit_flag          = 0;
@@ -74,89 +75,7 @@ static bool iclient_receive(instrument_client_t iclient, uint8_t* out_buffer, in
     }
     return true;
 }
-#if 0
-static int start_logging(void)
-{
-    idevice_error_t ret = idevice_new_with_options(&device, udid, (use_network) ? IDEVICE_LOOKUP_NETWORK : IDEVICE_LOOKUP_USBMUX);
-    if (ret != IDEVICE_E_SUCCESS)
-    {
-        fprintf(stderr, "Device with udid %s not found!?\n", udid);
-        return -1;
-    }
-    SPDLOG_INFO("udid = {}", udid);
 
-    /* cmd channels */
-    instrument_client_t iclient;
-    instrument_error_t ierr;
-    ierr = instrument_client_start_service(device, &iclient, TOOL_NAME);
-    if (ierr == INSTRUMENT_E_SUCCESS)
-    {
-        FILE* f = fopen("../0.bin", "r");
-        if (f)
-        {
-            fseek(f, 0, SEEK_END);
-            size_t size = ftell(f);
-            char* bin   = new char[size];
-
-            rewind(f);
-            fread(bin, sizeof(char), size, f);
-            fclose(f);
-
-            uint32_t sents;
-            ierr = instrument_send_command(iclient, bin, size, &sents);
-            if (ierr != INSTRUMENT_E_SUCCESS)
-            {
-                std::cout << ierr << std::endl;
-            }
-            delete[] bin;
-
-            // """
-            // 从 instrument client 接收长度为 length 的 buffer
-            // 成功时表示整块数据都被接收
-            // :param client: instrument client(C对象）
-            // :param length: 数据长度
-            // :return: 长度为 length 的 buffer, 失败时返回 None
-            // """
-            int headerSize = sizeof(DTXMessageHeader);
-            uint8_t* buf   = (uint8_t*)malloc(headerSize);
-
-            iclient_receive(iclient, buf, headerSize);
-
-            int bodySize = ((DTXMessageHeader*)buf)->length;
-            buf          = (uint8_t*)realloc(buf, headerSize + bodySize);
-
-            iclient_receive(iclient, buf + headerSize, bodySize);
-
-            DTXMessage_t dtx = DTXMessage::from_bytes(buf, headerSize + bodySize);
-
-            SPDLOG_INFO("recv dtx={}", dtx->_buf_size);
-
-            FILE* f2 = fopen("../1.bin", "wb");
-            if (f2)
-            {
-                fwrite(dtx->_buf, dtx->_buf_size, sizeof(char), f2);
-                fclose(f2);
-            }
-
-            instrument_client_free(iclient);
-
-            quit_flag++;
-        }
-        else
-        {
-            char err[100];
-            perror(err);
-            std::cout << "open file error\n" << err;
-        }
-    }
-    else
-    {
-        std::cout << "[ERROR] " << ierr << std::endl;
-    }
-
-    return 0;
-}
-#else
 static int start_logging(void)
 {
     idevice_error_t ret = idevice_new_with_options(&device, udid, (use_network) ? IDEVICE_LOOKUP_NETWORK : IDEVICE_LOOKUP_USBMUX);
@@ -171,53 +90,10 @@ static int start_logging(void)
     FILE* f = fopen("../0.bin", "r");
     if (f)
     {
-        fseek(f, 0, SEEK_END);
-        size_t size = ftell(f);
-        char* bin   = new char[size];
-
-        rewind(f);
-        fread(bin, sizeof(char), size, f);
         fclose(f);
-        SPDLOG_INFO("{} {}", bin, size);
-
-        DTXClientMixin_t dtx_client = std::make_shared<DTXClientMixin>();
-        auto iclient                = dtx_client->new_client(device);
-        auto dtx_send               = DTXMessage::from_bytes((uint8_t*)bin, size);
-        dtx_client->send_dtx(iclient, *dtx_send);
-        delete[] bin;
-
-        // """
-        // 从 instrument client 接收长度为 length 的 buffer
-        // 成功时表示整块数据都被接收
-        // :param client: instrument client(C对象）
-        // :param length: 数据长度
-        // :return: 长度为 length 的 buffer, 失败时返回 None
-        // """
-        // int headerSize = sizeof(DTXMessageHeader);
-        // uint8_t* buf   = (uint8_t*)malloc(headerSize);
-
-        // iclient_receive(iclient, buf, headerSize);
-
-        // int bodySize = ((DTXMessageHeader*)buf)->length;
-        // buf          = (uint8_t*)realloc(buf, headerSize + bodySize);
-
-        // iclient_receive(iclient, buf + headerSize, bodySize);
-
-        // DTXMessage_t dtx = DTXMessage::from_bytes(buf, headerSize + bodySize);
-        DTXMessage_t dtx_recv = dtx_client->recv_dtx(iclient);
-        if (dtx_recv)
-            std::cout << dtx_recv;
-        else
-            SPDLOG_ERROR("dtx_recv is null");
-
-        FILE* f2 = fopen("../1.bin", "wb");
-        if (f2)
-        {
-            fwrite(dtx_recv->_buf, dtx_recv->_buf_size, sizeof(char), f2);
-            fclose(f2);
-        }
-
-        instrument_client_free(iclient);
+        instrument_rpc rpc;
+        rpc.init(device);
+        rpc.start();
 
         quit_flag++;
     }
@@ -230,7 +106,6 @@ static int start_logging(void)
 
     return 0;
 }
-#endif
 
 static void stop_logging(void)
 {
